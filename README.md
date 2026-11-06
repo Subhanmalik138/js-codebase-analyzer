@@ -46,7 +46,7 @@ Requires Node 18+ and nothing else — there are no dependencies.
 ```bash
 npm install -g codebase-analyzer
 # or run it in place:
-node bin/codebase-analyzer.js ./src
+node cli/codebase-analyzer.js ./src
 ```
 
 ## Usage
@@ -137,7 +137,7 @@ a dependency cycle, a dead export, a complexity hotspot, and a block pasted
 in two files. Run the analyzer on it to see every finding fire:
 
 ```bash
-node bin/codebase-analyzer.js examples/sample-project
+node cli/codebase-analyzer.js examples/sample-project
 ```
 
 ## License
