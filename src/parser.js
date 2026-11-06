@@ -55,9 +55,55 @@ function stripCommentsAndStrings(source) {
   return out;
 }
 
+/**
+ * Strip comments only, keeping string literals intact. Import and export
+ * parsing runs on this: the specifier lives inside a string, so stripping
+ * strings would erase the very thing being parsed.
+ */
+function stripComments(source) {
+  let out = '';
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (ch === '/' && next === '/') {
+      while (i < n && source[i] !== '\n') i++;
+    } else if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < n && !(source[i] === '*' && source[i + 1] === '/')) {
+        if (source[i] === '\n') out += '\n';
+        i++;
+      }
+      i += 2;
+    } else if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      out += ch;
+      i++;
+      while (i < n && source[i] !== quote) {
+        if (source[i] === '\\') {
+          out += source[i];
+          i++;
+        }
+        if (source[i] === '\n') out += '\n';
+        else out += source[i];
+        i++;
+      }
+      if (i < n) {
+        out += source[i];
+        i++;
+      }
+    } else {
+      out += ch;
+      i++;
+    }
+  }
+  return out;
+}
+
 /** All module specifiers a file loads, with how each one is loaded. */
 function parseImports(source) {
-  const clean = stripCommentsAndStrings(source);
+  const clean = stripComments(source);
   const imports = [];
   const seen = new Set();
   const collect = (re, kind) => {
@@ -78,7 +124,7 @@ function parseImports(source) {
 
 /** Named imports per specifier, used to tell which exports are actually used. */
 function parseNamedImports(source) {
-  const clean = stripCommentsAndStrings(source);
+  const clean = stripComments(source);
   const bySpecifier = new Map();
   const listRe = /import\s*\{([^}]*)\}\s*from\s*['"]([^'"]+)['"]/g;
   for (const match of clean.matchAll(listRe)) {
@@ -96,12 +142,25 @@ function parseNamedImports(source) {
     existing.push(`default:${match[1]}`);
     bySpecifier.set(match[2], existing);
   }
+  // Destructured require: const { a, b } = require('./x')
+  const requireDestructureRe =
+    /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+  for (const match of clean.matchAll(requireDestructureRe)) {
+    const names = match[1]
+      .split(',')
+      .map((part) => part.trim().split(':')[0].trim())
+      .filter((name) => /^[A-Za-z_$][\w$]*$/.test(name));
+    if (names.length > 0) {
+      const existing = bySpecifier.get(match[2]) || [];
+      bySpecifier.set(match[2], [...existing, ...names]);
+    }
+  }
   return bySpecifier;
 }
 
 /** Exported names, plus whether the file has a default export. */
 function parseExports(source) {
-  const clean = stripCommentsAndStrings(source);
+  const clean = stripComments(source);
   const named = new Set();
   for (const match of clean.matchAll(EXPORT_NAMED_RE)) {
     named.add(match[1]);
@@ -111,6 +170,18 @@ function parseExports(source) {
       const name = part.trim().split(/\s+as\s+/).pop().trim();
       if (/^[A-Za-z_$][\w$]*$/.test(name)) named.add(name);
     }
+  }
+  // CommonJS: module.exports = { a, b: c } and exports.name = ...
+  const cjsObjectRe = /module\.exports\s*=\s*\{([^}]*)\}/g;
+  for (const match of clean.matchAll(cjsObjectRe)) {
+    for (const part of match[1].split(',')) {
+      const key = part.trim().split(':')[0].trim();
+      if (/^[A-Za-z_$][\w$]*$/.test(key)) named.add(key);
+    }
+  }
+  const cjsPropertyRe = /(?:module\.)?exports\.([A-Za-z_$][\w$]*)\s*=/g;
+  for (const match of clean.matchAll(cjsPropertyRe)) {
+    named.add(match[1]);
   }
   const hasDefault = /export\s+default\b/.test(clean);
   return { named: [...named].sort(), hasDefault };
@@ -132,6 +203,7 @@ function countFunctions(source) {
 }
 
 module.exports = {
+  stripComments,
   stripCommentsAndStrings,
   parseImports,
   parseNamedImports,

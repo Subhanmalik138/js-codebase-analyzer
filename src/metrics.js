@@ -10,6 +10,8 @@ const parser = require('./parser');
  */
 function analyzeFile(file) {
   const lines = file.content.split('\n');
+  // A file ending in a newline has no extra blank line after it.
+  if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
   let codeLines = 0;
   let commentLines = 0;
   let blankLines = 0;

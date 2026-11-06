@@ -53,14 +53,55 @@ function findDuplicates(files, windowSize = 6) {
   }
 
   // Merge groups that are the same pasted chunk reported at adjacent offsets:
-  // keep the longest run per (file, startLine) pair.
-  const merged = [];
-  const covered = new Set();
-  for (const group of groups.sort((a, b) => b.occurrences.length - a.occurrences.length)) {
-    const key = group.occurrences.map((o) => `${o.file}:${o.startLine}`).join('|');
-    if (covered.has(key)) continue;
-    covered.add(key);
-    merged.push(group);
+  // windows sliding one line along a pasted block share most of their lines,
+  // so merge groups whose occurrences cover the same files with ranges that
+  // overlap or touch, widening the range to the full pasted block.
+  const sameFiles = (a, b) => {
+    if (a.length !== b.length) return false;
+    const filesA = a.map((o) => o.file).sort();
+    const filesB = b.map((o) => o.file).sort();
+    return filesA.every((f, i) => f === filesB[i]);
+  };
+  const rangesTouch = (a, b) => {
+    const byFileA = new Map(a.map((o) => [o.file, o]));
+    return b.every((o) => {
+      const other = byFileA.get(o.file);
+      return other && o.startLine <= other.endLine + 1 && other.startLine <= o.endLine + 1;
+    });
+  };
+  const mergeTwo = (a, b) => {
+    const byFile = new Map();
+    for (const occ of [...a, ...b]) {
+      const existing = byFile.get(occ.file);
+      if (existing) {
+        existing.startLine = Math.min(existing.startLine, occ.startLine);
+        existing.endLine = Math.max(existing.endLine, occ.endLine);
+      } else {
+        byFile.set(occ.file, { ...occ });
+      }
+    }
+    const occurrences = [...byFile.values()];
+    const lines = Math.max(...occurrences.map((o) => o.endLine - o.startLine + 1));
+    return { lines, occurrences };
+  };
+
+  let merged = groups;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    outer: for (let i = 0; i < merged.length; i++) {
+      for (let j = i + 1; j < merged.length; j++) {
+        if (
+          sameFiles(merged[i].occurrences, merged[j].occurrences) &&
+          rangesTouch(merged[i].occurrences, merged[j].occurrences)
+        ) {
+          merged[i] = mergeTwo(merged[i].occurrences, merged[j].occurrences);
+          merged.splice(j, 1);
+          changed = true;
+          break outer;
+        }
+      }
+    }
   }
   return merged.sort((a, b) => b.occurrences.length - a.occurrences.length);
 }
